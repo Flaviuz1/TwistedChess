@@ -8,6 +8,15 @@ from contextlib import asynccontextmanager
 import subprocess, sys
 subprocess.check_call([sys.executable, "-m", "pip", "install", "fastapi", "uvicorn"])
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 rooms: dict[str, list[WebSocket]] = {}
 _rooms_lock = asyncio.Lock()
