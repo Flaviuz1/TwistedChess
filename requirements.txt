@@ -1,7 +1,4 @@
-# Server (for Render)
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
-
-# Client (for running the game locally)
 pygame>=2.5.0
 websocket-client>=1.6.0
