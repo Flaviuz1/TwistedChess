@@ -4,7 +4,8 @@ import threading
 import random
 import os
 import math
-
+import subprocess, sys
+subprocess.check_call([sys.executable, "-m", "pip", "install", "fastapi", "uvicorn"])
 import classes
 
 # WebSocket server URL (wss:// for HTTPS, ws:// for localhost)
