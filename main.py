@@ -4,288 +4,435 @@ import json
 import threading
 import random
 import os
+import math
 
 import classes
 
 pg.init()
 
-# ── CONSTANTS ────────────────────────────────────────────────────────────────
+# ── CONSTANTS ─────────────────────────────────────────────────────────────────
 _BASE = os.path.dirname(os.path.abspath(__file__))
 _ASSETS = os.path.join(_BASE, "Assets")
 
-def _asset(path: str):
-    return os.path.join(_ASSETS, path)
+def _a(f):
+    return os.path.join(_ASSETS, f)
 
 screen_w = 400 * 2 + 200
 screen_h = 400 * 2
 screen = pg.display.set_mode((screen_w, screen_h))
-tile_size    = 44.8718 * 2
-sprite_size  = 35.8974 * 2
-offset       = 4.4872  * 2
-beg_offset   = 27.2436 * 2
+tile_size = 44.8718 * 2
+sprite_size = 35.8974 * 2
+offset = 4.4872 * 2
+beg_offset = 27.2436 * 2
 sprite_slide = 22.4359 * 2
-panel_x      = 820
-panel_cx     = 900
+panel_x = 820
+panel_cx = 900
+
+MOVE_ANIM_MS = 180
+ROT_ANIM_MS = 220
+
+def scale(path):
+    return pg.transform.scale(pg.image.load(_a(path)), (sprite_size, sprite_size))
 
 sprites = {
-    "Pw": pg.transform.scale(pg.image.load(_asset("PawnWhite.png")),    (sprite_size, sprite_size)),
-    "Pb": pg.transform.scale(pg.image.load(_asset("PawnBlack.png")),    (sprite_size, sprite_size)),
-    "Nw": pg.transform.scale(pg.image.load(_asset("KnightWhite.png")),  (sprite_size, sprite_size)),
-    "Nb": pg.transform.scale(pg.image.load(_asset("KnightBlack.png")),  (sprite_size, sprite_size)),
-    "Bw": pg.transform.scale(pg.image.load(_asset("BishopWhite.png")),  (sprite_size, sprite_size)),
-    "Bb": pg.transform.scale(pg.image.load(_asset("BishopBlack.png")),  (sprite_size, sprite_size)),
-    "Rw": pg.transform.scale(pg.image.load(_asset("RookWhite.png")),    (sprite_size, sprite_size)),
-    "Rb": pg.transform.scale(pg.image.load(_asset("RookBlack.png")),    (sprite_size, sprite_size)),
-    "Qw": pg.transform.scale(pg.image.load(_asset("QueenWhite.png")),   (sprite_size, sprite_size)),
-    "Qb": pg.transform.scale(pg.image.load(_asset("QueenBlack.png")),   (sprite_size, sprite_size)),
-    "Kw": pg.transform.scale(pg.image.load(_asset("KingWhite.png")),    (sprite_size, sprite_size)),
-    "Kb": pg.transform.scale(pg.image.load(_asset("KingBlack.png")),    (sprite_size, sprite_size)),
-    "Board": pg.transform.scale(pg.image.load(_asset("ChessBoard.png")), (screen_h, screen_h)),
+    "Pw": scale("PawnWhite.png"), "Pb": scale("PawnBlack.png"),
+    "Nw": scale("KnightWhite.png"), "Nb": scale("KnightBlack.png"),
+    "Bw": scale("BishopWhite.png"), "Bb": scale("BishopBlack.png"),
+    "Rw": scale("RookWhite.png"), "Rb": scale("RookBlack.png"),
+    "Qw": scale("QueenWhite.png"), "Qb": scale("QueenBlack.png"),
+    "Kw": scale("KingWhite.png"), "Kb": scale("KingBlack.png"),
+    "Board": pg.transform.scale(pg.image.load(_a("ChessBoard.png")), (screen_h, screen_h)),
 }
 
-# ── UI STATE ──────────────────────────────────────────────────────────────────
-code_input   = ""
-input_active = False
-input_rect   = pg.Rect(820, 450, 160, 36)
-btn_rect     = pg.Rect(820, 500, 160, 36)
-font_ui      = pg.font.SysFont("Consolas", 18)
-font_small   = pg.font.SysFont("Consolas", 13)
+font_ui = pg.font.SysFont("Consolas", 18)
+font_small = pg.font.SysFont("Consolas", 13)
+font_big = pg.font.SysFont("Consolas", 22, bold=True)
 
-# ── GAME STATE ────────────────────────────────────────────────────────────────
-board            = classes.Board()
+# ── UI RECTS ───────────────────────────────────────────────────────────────
+btn_create = pg.Rect(820, 310, 160, 34)
+input_rect = pg.Rect(820, 410, 160, 34)
+btn_join = pg.Rect(820, 454, 160, 34)
+
+# ── STATE ─────────────────────────────────────────────────────────────────────
+board = classes.Board()
 moves_this_round = 0
-selected         = None
+selected = None
+legal_moves: list[tuple[int, int]] = []
+last_move = None
+game_over = None  # None | "won" | "lost"
 
-# ── NETWORK STATE — nothing connects at startup ───────────────────────────────
-room_code = ''.join(chr(random.randint(65, 90)) for _ in range(8))
-sock      = socket.socket()
+room_code = "".join(chr(random.randint(65, 90)) for _ in range(8))
+sock = socket.socket()
 player_id = None
-my_color  = 'w'   # placeholder until connected
-my_turn   = False  # nobody can move until connected
+my_color = "w"
+my_turn = False
 connected = False
+input_active = False
+code_input = ""
+status_msg = ""
 
-# ── NETWORKING ────────────────────────────────────────────────────────────────
-def apply_move(move):
-    global moves_this_round, my_turn
+# ── ANIMATIONS ───────────────────────────────────────────────────────────────
+move_anim = None  # { "piece_key", "from_vr","from_vc","to_vr","to_vc", "start_ms" }
+rotation_anim = None  # { "start_rot", "start_ms" }  # animates 0..90 then we call rotate_board
+
+# ── NETWORKING ───────────────────────────────────────────────────────────────
+def apply_move(move_dict):
+    global moves_this_round, my_turn, last_move, game_over
     try:
-        fr, fc = move["from"][0], move["from"][1]
-        tr, tc = move["to"][0], move["to"][1]
+        fr, fc = move_dict["from"][0], move_dict["from"][1]
+        tr, tc = move_dict["to"][0], move_dict["to"][1]
     except (KeyError, TypeError, IndexError):
         return
     if not (0 <= fr < 8 and 0 <= fc < 8 and 0 <= tr < 8 and 0 <= tc < 8):
         return
-    board.move(fr, fc, tr, tc)
+    promo = move_dict.get("promotion")
+    board.move(fr, fc, tr, tc, promotion=promo)
+    last_move = (fr, fc, tr, tc)
     moves_this_round += 1
     if moves_this_round >= 2:
         moves_this_round = 0
-        board.rotate_board()
+        rotation_anim_start()
     my_turn = not my_turn
+    opp = "b" if my_color == "w" else "w"
+    if board.is_checkmate(opp):
+        game_over = "won"
+    elif board.is_checkmate(my_color):
+        game_over = "lost"
 
-def send_move(from_pos, to_pos):
+def send_move(from_pos, to_pos, promotion=None):
     if not connected:
         return
     try:
-        data = json.dumps({"from": list(from_pos), "to": list(to_pos)})
-        sock.sendall((data + "\n").encode())
+        payload = {"from": list(from_pos), "to": list(to_pos)}
+        if promotion:
+            payload["promotion"] = promotion
+        data = json.dumps(payload) + "\n"
+        sock.sendall(data.encode())
     except Exception as e:
         print(f"Send error: {e}")
 
 def listen():
-    global connected
-    buffer = b""
+    global connected, status_msg
+    buf = b""
     while True:
         try:
-            data = sock.recv(4096)
-            if not data:
+            chunk = sock.recv(4096)
+            if not chunk:
                 break
-            buffer += data
-            while b"\n" in buffer:
-                line_b, buffer = buffer.split(b"\n", 1)
+            buf += chunk
+            while b"\n" in buf:
+                line_b, buf = buf.split(b"\n", 1)
                 line = line_b.decode("utf-8", errors="replace").strip()
                 if line:
                     try:
                         apply_move(json.loads(line))
                     except (json.JSONDecodeError, TypeError):
                         pass
-        except (ConnectionResetError, ConnectionAbortedError, OSError) as e:
+        except OSError as e:
             print(f"Listen error: {e}")
             break
     connected = False
+    status_msg = "Disconnected"
 
-def connect_with_code(code):
-    global player_id, my_color, connected, my_turn, sock
+def _do_connect(code):
+    global player_id, my_color, connected, my_turn, status_msg, sock
     try:
-        sock.connect(('localhost', 5555))
+        sock.connect(("localhost", 5555))
         sock.sendall((code + "\n").encode())
         buf = b""
         while b"\n" not in buf:
             chunk = sock.recv(1024)
             if not chunk:
-                raise ConnectionError("Server closed connection")
+                raise ConnectionError("Server closed")
             buf += chunk
         player_id = int(buf.decode().strip())
-        my_color  = 'w' if player_id == 0 else 'b'
-        my_turn   = (player_id == 0)  # white moves first
+        my_color = "w" if player_id == 0 else "b"
+        my_turn = player_id == 0
         connected = True
+        status_msg = f"Connected as {'WHITE' if player_id == 0 else 'BLACK'}"
         threading.Thread(target=listen, daemon=True).start()
-        print(f"Connected as {'WHITE' if player_id == 0 else 'BLACK'}, my_turn={my_turn}")
+        print(status_msg)
     except Exception as e:
-        print(f"Connection failed: {e}")
+        status_msg = f"Failed: {e}"
+        print(status_msg)
         try:
             sock.close()
-        except OSError:
+        except Exception:
             pass
         sock = socket.socket()
 
-# ── DRAWING ───────────────────────────────────────────────────────────────────
-def draw_pieces():
-    for visual_row in range(8):
-        for visual_col in range(8):
-            if my_color == 'w':
-                board_row, board_col = visual_row, visual_col
+def create_room():
+    threading.Thread(target=_do_connect, args=(room_code,), daemon=True).start()
+
+def join_room():
+    if len(code_input) == 8:
+        threading.Thread(target=_do_connect, args=(code_input,), daemon=True).start()
+
+def rotation_anim_start():
+    global rotation_anim
+    rotation_anim = {"start_rot": board.rotation, "start_ms": pg.time.get_ticks()}
+
+def rotation_anim_tick():
+    global rotation_anim, last_move
+    if rotation_anim is None:
+        return
+    elapsed = pg.time.get_ticks() - rotation_anim["start_ms"]
+    if elapsed >= ROT_ANIM_MS:
+        board.rotate_board()
+        if last_move:
+            fr, fc, tr, tc = last_move
+            last_move = (fc, 7 - fr, tc, 7 - tr)
+        rotation_anim = None
+        return
+    rotation_anim["progress"] = elapsed / ROT_ANIM_MS
+
+# ── BOARD SURFACE (for rotation) ──────────────────────────────────────────────
+_board_surf = pg.Surface((screen_h, screen_h))
+
+def _tile_rect(vr, vc):
+    """Visual pixel rect for tile (vr, vc) - aligns with board squares."""
+    x = beg_offset + vc * (tile_size + offset) - sprite_slide
+    y = beg_offset + vr * (tile_size + offset) - sprite_slide
+    return (x, y, int(tile_size), int(tile_size))
+
+def _piece_center(vr, vc):
+    cx = beg_offset + vc * (tile_size + offset) + tile_size / 2 - sprite_slide
+    cy = beg_offset + vr * (tile_size + offset) + tile_size / 2 - sprite_slide
+    return (cx, cy)
+
+def draw_board_to_surface(surf, rotation_angle=0):
+    """Draw board + highlights + pieces onto surf. rotation_angle in degrees for anim."""
+    surf.blit(sprites["Board"], (0, 0))
+    for vr in range(8):
+        for vc in range(8):
+            br, bc = (vr, vc) if my_color == "w" else (7 - vr, 7 - vc)
+            rx, ry, rw, rh = _tile_rect(vr, vc)
+
+            if last_move and (br, bc) in ((last_move[0], last_move[1]), (last_move[2], last_move[3])):
+                hl = pg.Surface((rw, rh), pg.SRCALPHA)
+                hl.fill((255, 140, 0, 70))
+                surf.blit(hl, (rx, ry))
+
+            if selected == (br, bc):
+                hl = pg.Surface((rw, rh), pg.SRCALPHA)
+                hl.fill((100, 100, 90, 72))
+                surf.blit(hl, (rx, ry))
+
+            piece = board.get(br, bc)
+            skip = move_anim and (
+                (move_anim.get("piece_br") == br and move_anim.get("piece_bc") == bc)
+                or (move_anim.get("to_br") == br and move_anim.get("to_bc") == bc)
+            )
+            if piece and not skip:
+                spr = sprites[piece.type + piece.color]
+                cx, cy = _piece_center(vr, vc)
+                x, y = cx - sprite_size / 2, cy - sprite_size / 2
+                surf.blit(spr, (x, y))
+
+    if move_anim:
+        t = pg.time.get_ticks() - move_anim["start_ms"]
+        if t >= MOVE_ANIM_MS:
+            move_anim_finish()
+        else:
+            progress = t / MOVE_ANIM_MS
+            x1, y1 = _piece_center(move_anim["from_vr"], move_anim["from_vc"])
+            x2, y2 = _piece_center(move_anim["to_vr"], move_anim["to_vc"])
+            x = x1 + (x2 - x1) * progress
+            y = y1 + (y2 - y1) * progress
+            scale_fac = 1.0
+            if progress < 0.5:
+                scale_fac = 1.0 + 0.22 * (progress * 2)
             else:
-                board_row, board_col = 7 - visual_row, 7 - visual_col
+                scale_fac = 1.22 - 0.22 * ((progress - 0.5) * 2)
+            spr = sprites[move_anim["piece_key"]]
+            w, h = int(sprite_size * scale_fac), int(sprite_size * scale_fac)
+            scaled = pg.transform.smoothscale(spr, (w, h))
+            surf.blit(scaled, (x - w / 2, y - h / 2))
 
-            # draw highlight under piece
-            if selected == (board_row, board_col):
-                sx = beg_offset + visual_col * (tile_size + offset)
-                sy = beg_offset + visual_row * (tile_size + offset)
-                s = pg.Surface((int(tile_size), int(tile_size)), pg.SRCALPHA)
-                s.fill((255, 255, 0, 90))
-                screen.blit(s, (sx, sy))
+    if rotation_angle != 0:
+        rotated = pg.transform.rotate(surf, -rotation_angle)
+        rect = rotated.get_rect(center=(screen_h / 2, screen_h / 2))
+        return rotated, rect
+    return surf, pg.Rect(0, 0, screen_h, screen_h)
 
-            piece = board.get(board_row, board_col)
-            if piece:
-                key    = piece.type + piece.color
-                sprite = sprites[key]
-                x = beg_offset + visual_col * (tile_size + offset) - sprite_slide + 8
-                y = beg_offset + visual_row * (tile_size + offset) - sprite_slide + 8
-                screen.blit(sprite, (x, y))
+def move_anim_finish():
+    global move_anim
+    move_anim = None
+
+def draw_pieces_and_board():
+    rotation_anim_tick()
+    rot_angle = 0.0
+    if rotation_anim is not None and "progress" in rotation_anim:
+        rot_angle = rotation_anim["progress"] * 90
+    _board_surf.fill((0, 0, 0))
+    result, rect = draw_board_to_surface(_board_surf, rot_angle)
+    if isinstance(result, pg.Surface) and result != _board_surf:
+        screen.blit(result, rect)
+    else:
+        screen.blit(_board_surf, (0, 0))
+
+def _rotate_point(cx, cy, x, y, deg):
+    rad = math.radians(deg)
+    cos, sin = math.cos(rad), math.sin(rad)
+    dx, dy = x - cx, y - cy
+    return (cx + dx * cos - dy * sin, cy + dx * sin + dy * cos)
 
 def draw_arrow():
-    cx, cy = panel_cx, 200
-    size   = 40
-    rot    = board.rotation
-    directions = {
-        0: [(cx,cy-size),(cx-20,cy+10),(cx-8,cy+10),(cx-8,cy+size),(cx+8,cy+size),(cx+8,cy+10),(cx+20,cy+10)],
-        1: [(cx+size,cy),(cx-10,cy-20),(cx-10,cy-8),(cx-size,cy-8),(cx-size,cy+8),(cx-10,cy+8),(cx-10,cy+20)],
-        2: [(cx,cy+size),(cx-20,cy-10),(cx-8,cy-10),(cx-8,cy-size),(cx+8,cy-size),(cx+8,cy-10),(cx+20,cy-10)],
-        3: [(cx-size,cy),(cx+10,cy-20),(cx+10,cy-8),(cx+size,cy-8),(cx+size,cy+8),(cx+10,cy+8),(cx+10,cy+20)],
-    }
-    pg.draw.polygon(screen, (220, 180, 80),  directions[rot])
-    pg.draw.polygon(screen, (255, 220, 100), directions[rot], 2)
-    lbl = font_small.render("PAWN DIRECTION", True, (180, 180, 180))
-    screen.blit(lbl, (cx - lbl.get_width()//2, cy + size + 12))
+    cx, cy = panel_cx, 130
+    sz = 35
+    angle_deg = board.rotation * 90
+    if rotation_anim is not None and "progress" in rotation_anim:
+        angle_deg += rotation_anim["progress"] * 90
+    # Base arrow pointing up (direction 0)
+    base = [(cx, cy - sz), (cx - 18, cy + 8), (cx - 7, cy + 8), (cx - 7, cy + sz), (cx + 7, cy + sz), (cx + 7, cy + 8), (cx + 18, cy + 8)]
+    dirs = [_rotate_point(cx, cy, x, y, angle_deg) for x, y in base]
+    pg.draw.polygon(screen, (220, 180, 80), dirs)
+    pg.draw.polygon(screen, (255, 220, 100), dirs, 2)
+    lbl = font_small.render("PAWN DIRECTION", True, (160, 160, 160))
+    screen.blit(lbl, (cx - lbl.get_width() // 2, cy + sz + 8))
+
+def draw_btn(rect, label, active=False, green=False):
+    col = (20, 60, 20) if green else ((60, 50, 20) if active else (35, 35, 35))
+    pg.draw.rect(screen, col, rect)
+    pg.draw.rect(screen, (220, 180, 80) if active or green else (70, 70, 70), rect, 2)
+    t = font_small.render(label, True, (220, 180, 80) if active or green else (140, 140, 140))
+    screen.blit(t, (rect.x + rect.w // 2 - t.get_width() // 2, rect.y + rect.h // 2 - t.get_height() // 2))
 
 def draw_ui():
-    # turn indicator
-    turn_text = ("YOUR TURN" if my_turn else "WAITING...") if connected else "NOT CONNECTED"
-    turn_col  = (100, 220, 100) if my_turn else (180, 100, 100)
-    screen.blit(font_small.render(turn_text, True, turn_col), (panel_x, 290))
+    screen.blit(font_small.render("YOUR ROOM CODE", True, (100, 100, 100)), (panel_x, 253))
+    screen.blit(font_small.render("(Host: click CREATE ROOM \nto play as White)", True, (90, 90, 90)), (panel_x, 268))
+    screen.blit(font_big.render(room_code, True, (100, 200, 100)), (panel_x, 226))
+    draw_btn(btn_create, "CREATE ROOM", active=not connected, green=connected and player_id == 0)
 
-    # your code
-    screen.blit(font_small.render("YOUR CODE", True, (100, 100, 100)), (panel_x, 320))
-    screen.blit(font_ui.render(room_code, True, (100, 180, 100)),      (panel_x, 338))
+    pg.draw.line(screen, (55, 55, 55), (812, 358), (992, 358), 1)
 
-    pg.draw.line(screen, (60, 60, 60), (810, 410), (990, 410), 1)
+    screen.blit(font_small.render("JOIN WITH CODE", True, (100, 100, 100)), (panel_x, 368))
+    border = (220, 180, 80) if input_active else (60, 60, 60)
+    pg.draw.rect(screen, (25, 25, 25), input_rect)
+    pg.draw.rect(screen, border, input_rect, 2)
+    ts = font_ui.render(
+        code_input + ("_" if input_active and (pg.time.get_ticks() // 500) % 2 == 0 else " "),
+        True, (220, 220, 220),
+    )
+    screen.blit(ts, (input_rect.x + 6, input_rect.y + 7))
 
-    # join label + input
-    screen.blit(font_small.render("JOIN WITH CODE", True, (150, 150, 150)), (panel_x, 420))
-    border_col = (220, 180, 80) if input_active else (60, 60, 60)
-    pg.draw.rect(screen, (30, 30, 30), input_rect)
-    pg.draw.rect(screen, border_col,   input_rect, 2)
-    text_surf = font_ui.render(code_input, True, (220, 220, 220))
-    screen.blit(text_surf, (input_rect.x + 8, input_rect.y + 8))
+    draw_btn(btn_join, "JOIN ROOM", active=len(code_input) == 8 and not connected, green=connected and player_id == 1)
 
-    # blinking cursor
-    if input_active and (pg.time.get_ticks() // 500) % 2 == 0:
-        cx = input_rect.x + 8 + text_surf.get_width() + 2
-        pg.draw.line(screen, (220,220,220), (cx, input_rect.y+6), (cx, input_rect.y+28), 2)
+    pg.draw.line(screen, (55, 55, 55), (812, 498), (992, 498), 1)
 
-    # connect button
-    btn_col = (20, 60, 20) if connected else (60, 50, 20)
-    pg.draw.rect(screen, btn_col,        btn_rect)
-    pg.draw.rect(screen, (220, 180, 80), btn_rect, 2)
-    btn_text = font_ui.render("CONNECTED" if connected else "CONNECT", True, (220, 180, 80))
-    screen.blit(btn_text, (btn_rect.x + btn_rect.width//2 - btn_text.get_width()//2, btn_rect.y + 8))
+    if status_msg:
+        screen.blit(font_small.render(status_msg, True, (160, 160, 100)), (panel_x, 508))
 
-    # color indicator once connected
-    if connected:
-        col_txt = "PLAYING AS WHITE" if my_color == 'w' else "PLAYING AS BLACK"
-        screen.blit(font_small.render(col_txt, True, (180,180,100)), (panel_x, 548))
+    if game_over:
+        msg = "You won by checkmate!" if game_over == "won" else "Checkmate. You lost."
+        col = (100, 220, 100) if game_over == "won" else (220, 100, 100)
+        screen.blit(font_big.render(msg, True, col), (panel_x, 518))
+    elif connected:
+        color_str = "WHITE" if my_color == "w" else "BLACK"
+        turn_str = "YOUR TURN" if my_turn else "WAITING..."
+        turn_col = (100, 220, 100) if my_turn else (200, 100, 100)
+        screen.blit(font_small.render(f"Playing as {color_str}", True, (160, 160, 160)), (panel_x, 528))
+        screen.blit(font_small.render(turn_str, True, turn_col), (panel_x, 548))
+    else:
+        screen.blit(font_small.render("Not connected", True, (150, 80, 80)), (panel_x, 528))
 
 # ── INPUT ─────────────────────────────────────────────────────────────────────
 def screen_to_board(mx, my):
-    col = int((mx - beg_offset + sprite_slide - 8)  / (tile_size + offset))
+    col = int((mx - beg_offset + sprite_slide - 8) / (tile_size + offset))
     row = int((my - beg_offset + sprite_slide - 10) / (tile_size + offset))
     if not (0 <= row < 8 and 0 <= col < 8):
         return None
-    if my_color == 'b':
-        return (7 - row, 7 - col)
-    return (row, col)
+    return (7 - row, 7 - col) if my_color == "b" else (row, col)
+
+def board_to_visual(br, bc):
+    if my_color == "w":
+        return (br, bc)
+    return (7 - br, 7 - bc)
 
 def handle_click(mx, my):
-    global selected
-    if not connected or not my_turn:
+    global selected, legal_moves, move_anim
+    if not connected or not my_turn or game_over:
         return
     pos = screen_to_board(mx, my)
     if pos is None:
         selected = None
+        legal_moves = []
         return
-    r, c   = pos
-    piece  = board.get(r, c)
+    r, c = pos
+    piece = board.get(r, c)
 
     if selected is None:
         if piece and piece.color == my_color:
             selected = (r, c)
+            legal_moves = board.get_legal_moves(r, c)
     else:
         if (r, c) == selected:
             selected = None
+            legal_moves = []
         elif piece and piece.color == my_color:
             selected = (r, c)
-        else:
-            from_pos = selected
-            move     = {"from": list(from_pos), "to": [r, c]}
-            apply_move(move)          # apply locally
-            send_move(from_pos, (r,c)) # send to opponent via server
+            legal_moves = board.get_legal_moves(r, c)
+        elif (r, c) in legal_moves:
+            fr, fc = selected
+            piece_at = board.get(fr, fc)
+            if not piece_at:
+                selected = None
+                legal_moves = []
+                return
+            promo = None
+            if piece_at.type == "P" and board._is_promotion_square(r, c, piece_at.color):
+                promo = "Q"
+            vr1, vc1 = board_to_visual(fr, fc)
+            vr2, vc2 = board_to_visual(r, c)
+            move_anim = {
+                "piece_key": piece_at.type + piece_at.color,
+                "from_vr": vr1, "from_vc": vc1, "to_vr": vr2, "to_vc": vc2,
+                "piece_br": fr, "piece_bc": fc, "to_br": r, "to_bc": c,
+                "start_ms": pg.time.get_ticks(),
+            }
+            apply_move({"from": [fr, fc], "to": [r, c], "promotion": promo})
+            send_move((fr, fc), (r, c), promotion=promo)
             selected = None
+            legal_moves = []
+        else:
+            selected = None
+            legal_moves = []
 
 # ── GAME LOOP ─────────────────────────────────────────────────────────────────
-clock     = pg.time.Clock()
-game_loop = True
-while game_loop:
+clock = pg.time.Clock()
+running = True
+while running:
     for event in pg.event.get():
         if event.type == pg.QUIT:
-            game_loop = False
+            running = False
 
         if event.type == pg.MOUSEBUTTONDOWN:
-            input_active = input_rect.collidepoint(event.pos)
-            if btn_rect.collidepoint(event.pos):
-                if not connected and len(code_input) == 8:
-                    connect_with_code(code_input)
-            else:
-                handle_click(event.pos[0], event.pos[1])
+            pos = event.pos
+            input_active = input_rect.collidepoint(pos)
+            if btn_create.collidepoint(pos) and not connected:
+                create_room()
+            elif btn_join.collidepoint(pos) and not connected and len(code_input) == 8:
+                join_room()
+            elif not any(r.collidepoint(pos) for r in (btn_create, btn_join, input_rect)):
+                handle_click(*pos)
 
         if event.type == pg.KEYDOWN and input_active:
             if event.key == pg.K_BACKSPACE:
                 code_input = code_input[:-1]
-            elif event.key == pg.K_RETURN:
-                if not connected and len(code_input) == 8:
-                    connect_with_code(code_input)
+            elif event.key == pg.K_RETURN and len(code_input) == 8 and not connected:
+                join_room()
             elif len(code_input) < 8 and event.unicode.isalpha():
                 code_input += event.unicode.upper()
 
-    screen.fill((20, 20, 20))
-    screen.blit(sprites["Board"], (0, 0))
-    draw_pieces()
+    screen.fill((18, 18, 18))
+    draw_pieces_and_board()
     draw_arrow()
     draw_ui()
     pg.display.flip()
     clock.tick(60)
 
 try:
-    if sock:
-        sock.close()
-except (OSError, NameError):
+    sock.close()
+except Exception:
     pass
 pg.quit()

@@ -1,84 +1,69 @@
-import socket
-import threading
+import socket, threading
 
-rooms = {}
-_rooms_lock = threading.Lock()
+rooms: dict[str, list] = {}
+lock  = threading.Lock()
 
-def handle_client(conn, code, player_index):
-    try:
-        while True:
-            try:
-                data = conn.recv(4096)
-                if not data:
-                    break
-                with _rooms_lock:
-                    room = rooms.get(code, [])
-                if len(room) == 2:
-                    other = room[1 - player_index]
-                    try:
-                        other.sendall(data)
-                    except OSError:
-                        break
-            except (ConnectionResetError, ConnectionAbortedError, OSError) as e:
-                print(f"Player {player_index} recv/send error: {e}")
-                break
-    finally:
-        with _rooms_lock:
-            if code in rooms:
-                try:
-                    rooms[code].remove(conn)
-                except ValueError:
-                    pass
-                if not rooms[code]:
-                    del rooms[code]
+def handle_client(conn, code, idx):
+    while True:
         try:
-            conn.close()
+            data = conn.recv(4096)
+            if not data:
+                break
+            with lock:
+                room = rooms.get(code, [])
+            if len(room) == 2:
+                other = room[1 - idx]
+                try:
+                    other.sendall(data)
+                except OSError:
+                    break
         except OSError:
-            pass
-        print(f"Player {player_index} disconnected from room {code}")
+            break
+    print(f"Player {idx} left room {code}")
+    with lock:
+        if code in rooms:
+            try: rooms[code].remove(conn)
+            except ValueError: pass
+            if not rooms[code]:
+                del rooms[code]
+    try: conn.close()
+    except OSError: pass
 
 def main():
-    server = socket.socket()
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind(('0.0.0.0', 5555))
-    server.listen()
-    print("Server listening on port 5555")
+    srv = socket.socket()
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(('0.0.0.0', 5555))
+    srv.listen()
+    print("Server listening on :5555")
     while True:
-        conn, addr = server.accept()
+        conn, addr = srv.accept()
         try:
             raw = b""
             while b"\n" not in raw:
                 chunk = conn.recv(1024)
-                if not chunk:
-                    conn.close()
-                    continue
+                if not chunk: raise ConnectionError()
                 raw += chunk
             code = raw.decode().strip()
-            if not code:
-                try:
-                    conn.close()
-                except OSError:
-                    pass
-                continue
-        except (ConnectionResetError, OSError) as e:
-            print(f"Connection from {addr} failed before code: {e}")
-            try:
-                conn.close()
-            except OSError:
-                pass
+            if not code: raise ValueError("empty code")
+        except Exception as e:
+            print(f"Bad connection from {addr}: {e}")
+            try: conn.close()
+            except: pass
             continue
-        print(f"Connection from {addr}, code: {code}")
-        with _rooms_lock:
+
+        with lock:
             if code not in rooms:
                 rooms[code] = [conn]
+                idx = 0
                 conn.sendall(b'0\n')
-                print(f"Room {code} created — waiting for second player")
+                print(f"[{code}] created by {addr} — waiting...")
             else:
                 rooms[code].append(conn)
+                idx = 1
                 conn.sendall(b'1\n')
-                print(f"Room {code} full — game starting!")
-            player_index = len(rooms[code]) - 1
-        threading.Thread(target=handle_client, args=(conn, code, player_index), daemon=True).start()
+                print(f"[{code}] full — game on!")
+
+        threading.Thread(target=handle_client, args=(conn, code, idx), daemon=True).start()
 
 if __name__ == "__main__":
     main()
