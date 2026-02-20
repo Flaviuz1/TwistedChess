@@ -1,11 +1,9 @@
-# Render Blueprint for TwistedChess
-# Deploy at: https://dashboard.render.com
 services:
   - type: web
     name: twistedchess
     runtime: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install fastapi uvicorn websocket-client
     startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.0
+      - key: PORT
+        value: 10000

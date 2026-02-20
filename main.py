@@ -4,8 +4,7 @@ import threading
 import random
 import os
 import math
-import subprocess, sys
-subprocess.check_call([sys.executable, "-m", "pip", "install", "fastapi", "uvicorn"])
+import sys
 import classes
 
 # WebSocket server URL (wss:// for HTTPS, ws:// for localhost)
@@ -15,7 +14,10 @@ SERVER_URL = os.environ.get("TWISTEDCHESS_SERVER", "wss://twistedchess.onrender.
 pg.init()
 
 # ── CONSTANTS ─────────────────────────────────────────────────────────────────
-_BASE = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    _BASE = sys._MEIPASS  # type: ignore[attr-defined]
+else:
+    _BASE = os.path.dirname(os.path.abspath(__file__))
 _ASSETS = os.path.join(_BASE, "Assets")
 
 def _a(f):
@@ -183,7 +185,7 @@ def rotation_anim_tick():
             last_move = (fc, 7 - fr, tc, 7 - tr)
         rotation_anim = None
         return
-    rotation_anim["progress"] = elapsed / ROT_ANIM_MS
+    rotation_anim["progress"] = elapsed / ROT_ANIM_MS 
 
 # ── BOARD SURFACE (for rotation) ──────────────────────────────────────────────
 _board_surf = pg.Surface((screen_h, screen_h))
@@ -199,7 +201,7 @@ def _piece_center(vr, vc):
     cy = beg_offset + vr * (tile_size + offset) + tile_size / 2 - sprite_slide
     return (cx, cy)
 
-def draw_board_to_surface(surf, rotation_angle=0):
+def draw_board_to_surface(surf, rotation_angle: float = 0):
     """Draw board + highlights + pieces onto surf. rotation_angle in degrees for anim."""
     surf.blit(sprites["Board"], (0, 0))
     for vr in range(8):
@@ -412,7 +414,7 @@ while running:
                 create_room()
             elif btn_join.collidepoint(pos) and not connected and len(code_input) == 8:
                 join_room()
-            elif not any(r.collidepoint(pos) for r in (btn_create, btn_join, input_rect)):
+            elif not any(rect.collidepoint(pos) for rect in (btn_create, btn_join, input_rect)):
                 handle_click(*pos)
 
         if event.type == pg.KEYDOWN and input_active:
