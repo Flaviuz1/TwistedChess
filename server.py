@@ -5,6 +5,8 @@ Run: uvicorn server:app --host 0.0.0.0 --port $PORT
 import asyncio
 from contextlib import asynccontextmanager
 
+import subprocess, sys
+subprocess.check_call([sys.executable, "-m", "pip", "install", "fastapi", "uvicorn"])
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 rooms: dict[str, list[WebSocket]] = {}
