@@ -19,7 +19,9 @@ def main():
         code = conn.recv(1024).decode()
         if code not in rooms:
             rooms[code] = [conn]
+            conn.sendall(b'0')  # first to join = white = player 0
         else:
             rooms[code].append(conn)
+            conn.sendall(b'1')  # second to join = black = player 1
             for i, c in enumerate(rooms[code]):
                 threading.Thread(target=handle_client, args=(c, code, i)).start()
