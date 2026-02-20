@@ -108,6 +108,8 @@ class Board:
 
     def _raw_moves(self, r: int, c: int) -> list[tuple[int, int]]:
         """Moves for piece at (r,c) without check filtering. No promotion info here."""
+        if not _on_board(r, c):
+            return []
         piece = self.grid[r][c]
         if not piece:
             return []
@@ -250,6 +252,8 @@ class Board:
                     self.grid[fr][0] = rook
 
     def move(self, fr: int, fc: int, tr: int, tc: int, promotion: Optional[str] = None) -> None:
+        if not (_on_board(fr, fc) and _on_board(tr, tc)):
+            return
         piece = self.grid[fr][fc]
         if not piece:
             return
@@ -333,10 +337,11 @@ class Board:
                     return False
         return True
 
-    def find_piece(self, type: str, color: str) -> Optional[tuple[int, int]]:
+    def find_piece(self, piece_type: str, color: str) -> Optional[tuple[int, int]]:
+        """Find first piece of given type and color. Returns (r, c) or None."""
         for r in range(8):
             for c in range(8):
                 p = self.grid[r][c]
-                if p and p.type == type and p.color == color:
+                if p and p.type == piece_type and p.color == color:
                     return (r, c)
         return None
