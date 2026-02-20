@@ -1,0 +1,9 @@
+app = "twistedchess"
+primary_region = "ams"  # Amsterdam, closest to Romania
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 5555
+
+  [[services.ports]]
+    port = 5555
