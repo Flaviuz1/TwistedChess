@@ -1,4 +1,3 @@
-import numpy as np
 from typing import Optional
 
 class ChessPiece:
@@ -52,19 +51,26 @@ class Board:
 
     def move(self, fr, fc, tr, tc):
         piece = self.grid[fr][fc]
-        if piece:
-            piece.has_moved = True
-            # Update castling positions if king or rook moved
-            color = piece.color
-            if piece.type == "K":
-                self.castling[color]["king"] = (tr, tc)
-                piece.can_castle_kingside  = False
-                piece.can_castle_queenside = False
-            if piece.type == "R":
-                if (fr, fc) == self.castling[color]["rook_k"]:
-                    self.castling[color]["rook_k"] = None  # rook moved, no castling
-                if (fr, fc) == self.castling[color]["rook_q"]:
-                    self.castling[color]["rook_q"] = None
+        if not piece:
+            return
+        piece.has_moved = True
+        color = piece.color
+        if piece.type == "K":
+            self.castling[color]["king"] = (tr, tc)
+            piece.can_castle_kingside = False
+            piece.can_castle_queenside = False
+        if piece.type == "R":
+            if (fr, fc) == self.castling[color]["rook_k"]:
+                self.castling[color]["rook_k"] = None
+            if (fr, fc) == self.castling[color]["rook_q"]:
+                self.castling[color]["rook_q"] = None
+        captured = self.grid[tr][tc]
+        if captured and captured.type == "R":
+            cap_color = captured.color
+            if (tr, tc) == self.castling[cap_color]["rook_k"]:
+                self.castling[cap_color]["rook_k"] = None
+            if (tr, tc) == self.castling[cap_color]["rook_q"]:
+                self.castling[cap_color]["rook_q"] = None
         self.grid[tr][tc] = piece
         self.grid[fr][fc] = None
 

@@ -1,10 +1,21 @@
 import pygame as pg
-import socket, json, threading, random
+import socket
+import json
+import threading
+import random
+import os
+
 import classes
 
 pg.init()
 
 # ── CONSTANTS ────────────────────────────────────────────────────────────────
+_BASE = os.path.dirname(os.path.abspath(__file__))
+_ASSETS = os.path.join(_BASE, "Assets")
+
+def _asset(path: str):
+    return os.path.join(_ASSETS, path)
+
 screen_w = 400 * 2 + 200
 screen_h = 400 * 2
 screen = pg.display.set_mode((screen_w, screen_h))
@@ -17,19 +28,19 @@ panel_x      = 820
 panel_cx     = 900
 
 sprites = {
-    "Pw": pg.transform.scale(pg.image.load("Assets/PawnWhite.png"),    (sprite_size, sprite_size)),
-    "Pb": pg.transform.scale(pg.image.load("Assets/PawnBlack.png"),    (sprite_size, sprite_size)),
-    "Nw": pg.transform.scale(pg.image.load("Assets/KnightWhite.png"),  (sprite_size, sprite_size)),
-    "Nb": pg.transform.scale(pg.image.load("Assets/KnightBlack.png"),  (sprite_size, sprite_size)),
-    "Bw": pg.transform.scale(pg.image.load("Assets/BishopWhite.png"),  (sprite_size, sprite_size)),
-    "Bb": pg.transform.scale(pg.image.load("Assets/BishopBlack.png"),  (sprite_size, sprite_size)),
-    "Rw": pg.transform.scale(pg.image.load("Assets/RookWhite.png"),    (sprite_size, sprite_size)),
-    "Rb": pg.transform.scale(pg.image.load("Assets/RookBlack.png"),    (sprite_size, sprite_size)),
-    "Qw": pg.transform.scale(pg.image.load("Assets/QueenWhite.png"),   (sprite_size, sprite_size)),
-    "Qb": pg.transform.scale(pg.image.load("Assets/QueenBlack.png"),   (sprite_size, sprite_size)),
-    "Kw": pg.transform.scale(pg.image.load("Assets/KingWhite.png"),    (sprite_size, sprite_size)),
-    "Kb": pg.transform.scale(pg.image.load("Assets/KingBlack.png"),    (sprite_size, sprite_size)),
-    "Board": pg.transform.scale(pg.image.load("Assets/ChessBoard.png"), (screen_h, screen_h)),
+    "Pw": pg.transform.scale(pg.image.load(_asset("PawnWhite.png")),    (sprite_size, sprite_size)),
+    "Pb": pg.transform.scale(pg.image.load(_asset("PawnBlack.png")),    (sprite_size, sprite_size)),
+    "Nw": pg.transform.scale(pg.image.load(_asset("KnightWhite.png")),  (sprite_size, sprite_size)),
+    "Nb": pg.transform.scale(pg.image.load(_asset("KnightBlack.png")),  (sprite_size, sprite_size)),
+    "Bw": pg.transform.scale(pg.image.load(_asset("BishopWhite.png")),  (sprite_size, sprite_size)),
+    "Bb": pg.transform.scale(pg.image.load(_asset("BishopBlack.png")),  (sprite_size, sprite_size)),
+    "Rw": pg.transform.scale(pg.image.load(_asset("RookWhite.png")),    (sprite_size, sprite_size)),
+    "Rb": pg.transform.scale(pg.image.load(_asset("RookBlack.png")),    (sprite_size, sprite_size)),
+    "Qw": pg.transform.scale(pg.image.load(_asset("QueenWhite.png")),   (sprite_size, sprite_size)),
+    "Qb": pg.transform.scale(pg.image.load(_asset("QueenBlack.png")),   (sprite_size, sprite_size)),
+    "Kw": pg.transform.scale(pg.image.load(_asset("KingWhite.png")),    (sprite_size, sprite_size)),
+    "Kb": pg.transform.scale(pg.image.load(_asset("KingBlack.png")),    (sprite_size, sprite_size)),
+    "Board": pg.transform.scale(pg.image.load(_asset("ChessBoard.png")), (screen_h, screen_h)),
 }
 
 # ── UI STATE ──────────────────────────────────────────────────────────────────
@@ -56,8 +67,13 @@ connected = False
 # ── NETWORKING ────────────────────────────────────────────────────────────────
 def apply_move(move):
     global moves_this_round, my_turn
-    fr, fc = move["from"]
-    tr, tc = move["to"]
+    try:
+        fr, fc = move["from"][0], move["from"][1]
+        tr, tc = move["to"][0], move["to"][1]
+    except (KeyError, TypeError, IndexError):
+        return
+    if not (0 <= fr < 8 and 0 <= fc < 8 and 0 <= tr < 8 and 0 <= tc < 8):
+        return
     board.move(fr, fc, tr, tc)
     moves_this_round += 1
     if moves_this_round >= 2:
@@ -70,33 +86,44 @@ def send_move(from_pos, to_pos):
         return
     try:
         data = json.dumps({"from": list(from_pos), "to": list(to_pos)})
-        sock.sendall(data.encode())
+        sock.sendall((data + "\n").encode())
     except Exception as e:
         print(f"Send error: {e}")
 
 def listen():
-    buffer = ""
+    global connected
+    buffer = b""
     while True:
         try:
-            data = sock.recv(4096).decode()
+            data = sock.recv(4096)
             if not data:
                 break
             buffer += data
-            # handle multiple messages arriving at once
-            while "\n" in buffer:
-                line, buffer = buffer.split("\n", 1)
-                if line.strip():
-                    apply_move(json.loads(line.strip()))
-        except Exception as e:
+            while b"\n" in buffer:
+                line_b, buffer = buffer.split(b"\n", 1)
+                line = line_b.decode("utf-8", errors="replace").strip()
+                if line:
+                    try:
+                        apply_move(json.loads(line))
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+        except (ConnectionResetError, ConnectionAbortedError, OSError) as e:
             print(f"Listen error: {e}")
             break
+    connected = False
 
 def connect_with_code(code):
-    global player_id, my_color, connected, my_turn
+    global player_id, my_color, connected, my_turn, sock
     try:
         sock.connect(('localhost', 5555))
         sock.sendall((code + "\n").encode())
-        player_id = int(sock.recv(1024).decode().strip())
+        buf = b""
+        while b"\n" not in buf:
+            chunk = sock.recv(1024)
+            if not chunk:
+                raise ConnectionError("Server closed connection")
+            buf += chunk
+        player_id = int(buf.decode().strip())
         my_color  = 'w' if player_id == 0 else 'b'
         my_turn   = (player_id == 0)  # white moves first
         connected = True
@@ -104,6 +131,11 @@ def connect_with_code(code):
         print(f"Connected as {'WHITE' if player_id == 0 else 'BLACK'}, my_turn={my_turn}")
     except Exception as e:
         print(f"Connection failed: {e}")
+        try:
+            sock.close()
+        except OSError:
+            pass
+        sock = socket.socket()
 
 # ── DRAWING ───────────────────────────────────────────────────────────────────
 def draw_pieces():
@@ -240,7 +272,7 @@ while game_loop:
             elif event.key == pg.K_RETURN:
                 if not connected and len(code_input) == 8:
                     connect_with_code(code_input)
-            elif len(code_input) < 8:
+            elif len(code_input) < 8 and event.unicode.isalpha():
                 code_input += event.unicode.upper()
 
     screen.fill((20, 20, 20))
@@ -251,4 +283,9 @@ while game_loop:
     pg.display.flip()
     clock.tick(60)
 
+try:
+    if sock:
+        sock.close()
+except (OSError, NameError):
+    pass
 pg.quit()
