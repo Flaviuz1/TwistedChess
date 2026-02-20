@@ -9,7 +9,7 @@ import classes
 
 # WebSocket server URL (wss:// for HTTPS, ws:// for localhost)
 # Set via env TWISTEDCHESS_SERVER or change default for Render deployment
-SERVER_URL = os.environ.get("TWISTEDCHESS_SERVER", "ws://localhost:5555/ws")
+SERVER_URL = os.environ.get("TWISTEDCHESS_SERVER", "wss://twistedchess.onrender.com/ws")
 
 pg.init()
 
