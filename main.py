@@ -1,5 +1,4 @@
 import pygame as pg
-import socket
 import json
 import threading
 import random
@@ -7,6 +6,10 @@ import os
 import math
 
 import classes
+
+# WebSocket server URL (wss:// for HTTPS, ws:// for localhost)
+# Set via env TWISTEDCHESS_SERVER or change default for Render deployment
+SERVER_URL = os.environ.get("TWISTEDCHESS_SERVER", "ws://localhost:5555/ws")
 
 pg.init()
 
@@ -62,7 +65,7 @@ last_move = None
 game_over = None  # None | "won" | "lost"
 
 room_code = "".join(chr(random.randint(65, 90)) for _ in range(8))
-sock = socket.socket()
+ws = None  # WebSocket connection
 player_id = None
 my_color = "w"
 my_turn = False
@@ -100,66 +103,61 @@ def apply_move(move_dict):
         game_over = "lost"
 
 def send_move(from_pos, to_pos, promotion=None):
-    if not connected:
+    if not connected or ws is None:
         return
     try:
         payload = {"from": list(from_pos), "to": list(to_pos)}
         if promotion:
             payload["promotion"] = promotion
-        data = json.dumps(payload) + "\n"
-        sock.sendall(data.encode())
+        ws.send(json.dumps(payload))
     except Exception as e:
         print(f"Send error: {e}")
 
 def listen():
     global connected, status_msg
-    buf = b""
     while True:
         try:
-            chunk = sock.recv(4096)
-            if not chunk:
+            msg = ws.recv()
+            if not msg:
                 break
-            buf += chunk
-            while b"\n" in buf:
-                line_b, buf = buf.split(b"\n", 1)
-                line = line_b.decode("utf-8", errors="replace").strip()
-                if line:
-                    try:
-                        apply_move(json.loads(line))
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-        except OSError as e:
-            print(f"Listen error: {e}")
+            line = msg.strip()
+            if line:
+                try:
+                    apply_move(json.loads(line))
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        except Exception as e:
+            if "closed" not in str(e).lower():
+                print(f"Listen error: {e}")
             break
     connected = False
     status_msg = "Disconnected"
 
 def _do_connect(code):
-    global player_id, my_color, connected, my_turn, status_msg, sock
+    global player_id, my_color, connected, my_turn, status_msg, ws
+    conn = None
     try:
-        sock.connect(("localhost", 5555))
-        sock.sendall((code + "\n").encode())
-        buf = b""
-        while b"\n" not in buf:
-            chunk = sock.recv(1024)
-            if not chunk:
-                raise ConnectionError("Server closed")
-            buf += chunk
-        player_id = int(buf.decode().strip())
+        import websocket
+        conn = websocket.create_connection(SERVER_URL)
+        conn.send(code)
+        resp = conn.recv()
+        player_id = int(resp.strip())
         my_color = "w" if player_id == 0 else "b"
         my_turn = player_id == 0
         connected = True
+        ws = conn
         status_msg = f"Connected as {'WHITE' if player_id == 0 else 'BLACK'}"
         threading.Thread(target=listen, daemon=True).start()
         print(status_msg)
     except Exception as e:
         status_msg = f"Failed: {e}"
         print(status_msg)
-        try:
-            sock.close()
-        except Exception:
-            pass
-        sock = socket.socket()
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        ws = None
 
 def create_room():
     threading.Thread(target=_do_connect, args=(room_code,), daemon=True).start()
@@ -432,7 +430,8 @@ while running:
     clock.tick(60)
 
 try:
-    sock.close()
+    if ws:
+        ws.close()
 except Exception:
     pass
 pg.quit()

@@ -1,69 +1,96 @@
-import socket, threading
+"""
+TwistedChess WebSocket server for Render deployment.
+Run: uvicorn server:app --host 0.0.0.0 --port $PORT
+"""
+import asyncio
+from contextlib import asynccontextmanager
 
-rooms: dict[str, list] = {}
-lock  = threading.Lock()
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-def handle_client(conn, code, idx):
-    while True:
-        try:
-            data = conn.recv(4096)
-            if not data:
-                break
-            with lock:
-                room = rooms.get(code, [])
-            if len(room) == 2:
-                other = room[1 - idx]
-                try:
-                    other.sendall(data)
-                except OSError:
-                    break
-        except OSError:
-            break
-    print(f"Player {idx} left room {code}")
-    with lock:
-        if code in rooms:
-            try: rooms[code].remove(conn)
-            except ValueError: pass
-            if not rooms[code]:
-                del rooms[code]
-    try: conn.close()
-    except OSError: pass
+rooms: dict[str, list[WebSocket]] = {}
+_rooms_lock = asyncio.Lock()
 
-def main():
-    srv = socket.socket()
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind(('0.0.0.0', 5555))
-    srv.listen()
-    print("Server listening on :5555")
-    while True:
-        conn, addr = srv.accept()
-        try:
-            raw = b""
-            while b"\n" not in raw:
-                chunk = conn.recv(1024)
-                if not chunk: raise ConnectionError()
-                raw += chunk
-            code = raw.decode().strip()
-            if not code: raise ValueError("empty code")
-        except Exception as e:
-            print(f"Bad connection from {addr}: {e}")
-            try: conn.close()
-            except: pass
-            continue
 
-        with lock:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    for room in rooms.values():
+        for ws in room:
+            try:
+                await ws.close()
+            except Exception:
+                pass
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/")
+def health():
+    """Health check for Render."""
+    return {"status": "ok", "service": "twistedchess"}
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    code = ""
+    player_index = -1
+
+    try:
+        # First message: room code
+        raw = await websocket.receive_text()
+        code = raw.strip()
+        if not code:
+            await websocket.close(code=1008)
+            return
+
+        async with _rooms_lock:
             if code not in rooms:
-                rooms[code] = [conn]
-                idx = 0
-                conn.sendall(b'0\n')
-                print(f"[{code}] created by {addr} — waiting...")
+                rooms[code] = [websocket]
+                player_index = 0
+                await websocket.send_text("0")
+                print(f"[{code}] created — waiting for second player")
             else:
-                rooms[code].append(conn)
-                idx = 1
-                conn.sendall(b'1\n')
+                rooms[code].append(websocket)
+                player_index = 1
+                await websocket.send_text("1")
                 print(f"[{code}] full — game on!")
 
-        threading.Thread(target=handle_client, args=(conn, code, idx), daemon=True).start()
+        # Relay messages to the other player
+        while True:
+            data = await websocket.receive_text()
+            async with _rooms_lock:
+                room = rooms.get(code, [])
+            if len(room) == 2:
+                other = room[1 - player_index]
+                try:
+                    await other.send_text(data)
+                except Exception:
+                    break
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+    finally:
+        async with _rooms_lock:
+            if code in rooms:
+                try:
+                    rooms[code].remove(websocket)
+                except ValueError:
+                    pass
+                if not rooms[code]:
+                    del rooms[code]
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+        print(f"Player {player_index} left room {code}")
+
 
 if __name__ == "__main__":
-    main()
+    import os
+    import uvicorn
+    port = int(os.environ.get("PORT", 5555))
+    uvicorn.run(app, host="0.0.0.0", port=port)
