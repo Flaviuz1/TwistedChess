@@ -317,7 +317,7 @@ def draw_ui():
     )
     screen.blit(ts, (input_rect.x + 6, input_rect.y + 7))
 
-    draw_btn(btn_join, "JOIN ROOM", active=len(code_input) == 8 and not connected, green=connected and player_id == 1)
+    draw_btn(btn_join, "JOIN ROOM", active=len(code_input) == 4 and not connected, green=connected and player_id == 1)
 
     pg.draw.line(screen, (55, 55, 55), (812, 498), (992, 498), 1)
 
