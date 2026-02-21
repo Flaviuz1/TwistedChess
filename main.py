@@ -34,7 +34,7 @@ sprite_slide = 22.4359 * 2
 panel_x = 820
 panel_cx = 900
 
-MOVE_ANIM_MS = 180
+MOVE_ANIM_MS = 240
 ROT_ANIM_MS = 220
 
 def scale(path):
@@ -67,7 +67,7 @@ legal_moves: list[tuple[int, int]] = []
 last_move = None
 game_over = None  # None | "won" | "lost"
 
-room_code = "".join(chr(random.randint(65, 90)) for _ in range(8))
+room_code = "".join(chr(random.randint(65, 90)) for _ in range(4))
 ws = None  # WebSocket connection
 player_id = None
 my_color = "w"
@@ -216,7 +216,7 @@ def draw_board_to_surface(surf, rotation_angle: float = 0):
 
             if selected == (br, bc):
                 hl = pg.Surface((rw, rh), pg.SRCALPHA)
-                hl.fill((100, 100, 90, 72))
+                hl.fill((255, 220, 50, 120))
                 surf.blit(hl, (rx, ry))
 
             piece = board.get(br, bc)
@@ -242,9 +242,9 @@ def draw_board_to_surface(surf, rotation_angle: float = 0):
             y = y1 + (y2 - y1) * progress
             scale_fac = 1.0
             if progress < 0.5:
-                scale_fac = 1.0 + 0.22 * (progress * 2)
+                scale_fac = 1.0 + 0.35 * (progress * 2)
             else:
-                scale_fac = 1.22 - 0.22 * ((progress - 0.5) * 2)
+                scale_fac = 1.35 - 0.35 * ((progress - 0.5) * 2)
             spr = sprites[move_anim["piece_key"]]
             w, h = int(sprite_size * scale_fac), int(sprite_size * scale_fac)
             scaled = pg.transform.smoothscale(spr, (w, h))
