@@ -166,7 +166,7 @@ def create_room():
     threading.Thread(target=_do_connect, args=(room_code,), daemon=True).start()
 
 def join_room():
-    if len(code_input) == 8:
+    if len(code_input) == 4:
         threading.Thread(target=_do_connect, args=(code_input,), daemon=True).start()
 
 def rotation_anim_start():
@@ -412,7 +412,7 @@ while running:
             input_active = input_rect.collidepoint(pos)
             if btn_create.collidepoint(pos) and not connected:
                 create_room()
-            elif btn_join.collidepoint(pos) and not connected and len(code_input) == 8:
+            elif btn_join.collidepoint(pos) and not connected and len(code_input) == 4:
                 join_room()
             elif not any(rect.collidepoint(pos) for rect in (btn_create, btn_join, input_rect)):
                 handle_click(*pos)
@@ -420,9 +420,9 @@ while running:
         if event.type == pg.KEYDOWN and input_active:
             if event.key == pg.K_BACKSPACE:
                 code_input = code_input[:-1]
-            elif event.key == pg.K_RETURN and len(code_input) == 8 and not connected:
+            elif event.key == pg.K_RETURN and len(code_input) == 4 and not connected:
                 join_room()
-            elif len(code_input) < 8 and event.unicode.isalpha():
+            elif len(code_input) < 4 and event.unicode.isalpha():
                 code_input += event.unicode.upper()
 
     screen.fill((18, 18, 18))
