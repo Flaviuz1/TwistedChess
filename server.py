@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 SERVER_URL = os.environ.get("TWISTEDCHESS_SERVER", "wss://twistedchess.onrender.com/ws")
 
 import subprocess, sys
-subprocess.check_call([sys.executable, "-m", "pip", "install", "fastapi", "uvicorn"])
+subprocess.check_call([sys.executable, "-m", "pip", "install", "fastapi", "uvicorn", "websockets"])
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -33,6 +33,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.api_route("/", methods=["GET", "HEAD"])
 
 @app.get("/")
 def health():
