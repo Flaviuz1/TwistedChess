@@ -2,8 +2,9 @@
 TwistedChess WebSocket server for Render deployment.
 Run: uvicorn server:app --host 0.0.0.0 --port $PORT
 """
-import asyncio
+import asyncio, os
 from contextlib import asynccontextmanager
+SERVER_URL = os.environ.get("TWISTEDCHESS_SERVER", "wss://twistedchess.onrender.com/ws")
 
 import subprocess, sys
 subprocess.check_call([sys.executable, "-m", "pip", "install", "fastapi", "uvicorn"])
@@ -12,7 +13,6 @@ from fastapi.middleware.cors import CORSMiddleware
 
 rooms: dict[str, list[WebSocket]] = {}
 _rooms_lock = asyncio.Lock()
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
