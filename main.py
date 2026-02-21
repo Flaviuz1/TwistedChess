@@ -58,6 +58,7 @@ font_big = pg.font.SysFont("Consolas", 22, bold=True)
 btn_create = pg.Rect(820, 310, 160, 34)
 input_rect = pg.Rect(820, 410, 160, 34)
 btn_join = pg.Rect(820, 454, 160, 34)
+btn_again = pg.Rect(820, 560, 160, 34)
 
 # ── STATE ─────────────────────────────────────────────────────────────────────
 board = classes.Board()
@@ -83,7 +84,20 @@ rotation_anim = None  # { "start_rot", "start_ms" }  # animates 0..90 then we ca
 
 # ── NETWORKING ───────────────────────────────────────────────────────────────
 def apply_move(move_dict):
-    global moves_this_round, my_turn, last_move, game_over
+    global my_color, moves_this_round, my_turn, last_move, game_over, board, selected, legal_moves, move_anim, rotation_anim
+    # check for reset signal
+    if move_dict.get("promotion") == "RESET":
+        board = classes.Board()
+        moves_this_round = 0
+        selected = None
+        legal_moves = []
+        last_move = None
+        game_over = None
+        move_anim = None
+        rotation_anim = None
+        my_color = "b" if my_color == "w" else "w" # type: ignore[attr-defined]
+        my_turn = (my_color == "w")
+        return
     try:
         fr, fc = move_dict["from"][0], move_dict["from"][1]
         tr, tc = move_dict["to"][0], move_dict["to"][1]
@@ -99,10 +113,10 @@ def apply_move(move_dict):
         moves_this_round = 0
         rotation_anim_start()
     my_turn = not my_turn
-    opp = "b" if my_color == "w" else "w"
+    opp = "b" if my_color == "w" else "w" # type: ignore[attr-defined]
     if board.is_checkmate(opp):
         game_over = "won"
-    elif board.is_checkmate(my_color):
+    elif board.is_checkmate(my_color): # type: ignore[attr-defined]
         game_over = "lost"
 
 def send_move(from_pos, to_pos, promotion=None):
@@ -325,9 +339,10 @@ def draw_ui():
         screen.blit(font_small.render(status_msg, True, (160, 160, 100)), (panel_x, 508))
 
     if game_over:
-        msg = "You won by checkmate!" if game_over == "won" else "Checkmate. You lost."
+        msg = "You won!" if game_over == "won" else "You lost."
         col = (100, 220, 100) if game_over == "won" else (220, 100, 100)
         screen.blit(font_big.render(msg, True, col), (panel_x, 518))
+        draw_btn(btn_again, "PLAY AGAIN", active=True)
     elif connected:
         color_str = "WHITE" if my_color == "w" else "BLACK"
         turn_str = "YOUR TURN" if my_turn else "WAITING..."
@@ -399,6 +414,21 @@ def handle_click(mx, my):
             selected = None
             legal_moves = []
 
+# --- RESET -------------------------------------------------------------------
+def reset_game():
+    global my_color, board, moves_this_round, selected, legal_moves, last_move, game_over, move_anim, rotation_anim, my_turn
+    board = classes.Board()
+    moves_this_round = 0
+    selected = None
+    legal_moves = []
+    last_move = None
+    game_over = None
+    move_anim = None
+    rotation_anim = None
+    my_color = "b" if my_color == "w" else "w"
+    my_turn = (my_color == "w")  # white goes first again
+    send_move((-1, -1), (-1, -1), promotion="RESET")  # signal opponent to reset too
+
 # ── GAME LOOP ─────────────────────────────────────────────────────────────────
 clock = pg.time.Clock()
 running = True
@@ -410,7 +440,9 @@ while running:
         if event.type == pg.MOUSEBUTTONDOWN:
             pos = event.pos
             input_active = input_rect.collidepoint(pos)
-            if btn_create.collidepoint(pos) and not connected:
+            if game_over and btn_again.collidepoint(pos):
+                reset_game()
+            elif btn_create.collidepoint(pos) and not connected:
                 create_room()
             elif btn_join.collidepoint(pos) and not connected and len(code_input) == 4:
                 join_room()
