@@ -23,7 +23,7 @@ _ASSETS = os.path.join(_BASE, "Assets")
 def _a(f):
     return os.path.join(_ASSETS, f)
 
-screen_w = 400 * 2 + 200
+screen_w = 400 * 2 + 400
 screen_h = 400 * 2
 screen = pg.display.set_mode((screen_w, screen_h))
 tile_size = 44.8718 * 2
@@ -120,7 +120,7 @@ def listen():
     global connected, status_msg
     while True:
         try:
-            msg = ws.recv()
+            msg = ws.recv() # type: ignore[attr-defined]
             if not msg:
                 break
             line = msg.strip()
@@ -185,7 +185,7 @@ def rotation_anim_tick():
             last_move = (fc, 7 - fr, tc, 7 - tr)
         rotation_anim = None
         return
-    rotation_anim["progress"] = elapsed / ROT_ANIM_MS 
+    rotation_anim["progress"] = elapsed / ROT_ANIM_MS  # type: ignore[attr-defined]
 
 # ── BOARD SURFACE (for rotation) ──────────────────────────────────────────────
 _board_surf = pg.Surface((screen_h, screen_h))
@@ -374,7 +374,7 @@ def handle_click(mx, my):
             selected = (r, c)
             legal_moves = board.get_legal_moves(r, c)
         elif (r, c) in legal_moves:
-            fr, fc = selected
+            fr, fc = selected # type: ignore[attr-defined]
             piece_at = board.get(fr, fc)
             if not piece_at:
                 selected = None

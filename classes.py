@@ -131,7 +131,7 @@ class Board:
             # Captures
             for dc in (-1, 1):
                 nr, nc = r + dr_pawn, c + dc
-                if _on_board(nr, nc) and self.grid[nr][nc] is not None and self.grid[nr][nc].color != color:
+                if _on_board(nr, nc) and self.grid[nr][nc] is not None and self.grid[nr][nc].color != color:  # type: ignore[attr-defined]
                     moves.append((nr, nc))
 
         elif piece.type == "N":
