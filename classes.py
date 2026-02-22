@@ -1,5 +1,11 @@
 from typing import Optional
 
+CASTLE_VECTORS: dict[int, dict[str, tuple[int,int]]] = {
+    0: {"k": (0,  1), "q": (0, -1)},
+    1: {"k": (1,  0), "q": (-1, 0)},
+    2: {"k": (0, -1), "q": (0,  1)},
+    3: {"k": (-1, 0), "q": (1,  0)},
+}
 
 class ChessPiece:
     def __init__(self, type: str, color: str, number: Optional[int] = None):
@@ -178,22 +184,39 @@ class Board:
                         if p is None or p.color != color:
                             moves.append((nr, nc))
             # Castling
+            opp = "b" if color == "w" else "w"
+            vecs = CASTLE_VECTORS[self.rotation]
             kpos = self.castling[color]["king"]
-            if piece.can_castle_kingside and kpos == (r, c):
-                rk = self.castling[color]["rook_k"]
-                if rk is not None:
-                    rr, rc = rk
-                    # squares between must be empty and not under attack
-                    empty = all(self.grid[r][x] is None for x in range(c + 1, 7))
-                    if empty and not self._is_square_attacked(r, c, "b" if color == "w" else "w") and not self._is_square_attacked(r, c + 1, "b" if color == "w" else "w") and not self._is_square_attacked(r, c + 2, "b" if color == "w" else "w"):
-                        moves.append((r, c + 2))
-            if piece.can_castle_queenside and kpos == (r, c):
-                rq = self.castling[color]["rook_q"]
-                if rq is not None:
-                    empty = all(self.grid[r][x] is None for x in range(1, c))
-                    opp = "b" if color == "w" else "w"
-                    if empty and not self._is_square_attacked(r, c, opp) and not self._is_square_attacked(r, c - 1, opp) and not self._is_square_attacked(r, c - 2, opp):
-                        moves.append((r, c - 2))
+            if kpos == (r, c):
+                for side, (dr, dc) in vecs.items():
+                    rook_key = "rook_k" if side == "k" else "rook_q"
+                    can_key  = "can_castle_kingside" if side == "k" else "can_castle_queenside"
+                    if not getattr(piece, can_key):
+                        continue
+                    rook_pos = self.castling[color][rook_key]
+                    if rook_pos is None:
+                        continue
+                    sq1 = (r + dr,     c + dc)
+                    sq2 = (r + 2*dr,   c + 2*dc)
+                    if not (_on_board(*sq1) and _on_board(*sq2)):
+                        continue
+                    # all squares between king and rook must be empty
+                    rr, rc = rook_pos
+                    path_clear = True
+                    nr2, nc2 = r + dr, c + dc
+                    while (nr2, nc2) != (rr, rc):
+                        if self.grid[nr2][nc2] is not None:
+                            path_clear = False
+                            break
+                        nr2, nc2 = nr2 + dr, nc2 + dc
+                    if not path_clear:
+                        continue
+                    # king must not pass through check
+                    if (self._is_square_attacked(r,       c,       opp) or
+                        self._is_square_attacked(sq1[0],  sq1[1],  opp) or
+                        self._is_square_attacked(sq2[0],  sq2[1],  opp)):
+                        continue
+                    moves.append(sq2)
 
         return moves
 
@@ -220,36 +243,36 @@ class Board:
         return safe
 
     def _apply_raw_move(self, fr: int, fc: int, tr: int, tc: int, piece: ChessPiece) -> None:
-        """Apply move without updating has_moved/castling (for try-out). Handles castling rook move."""
         self.grid[fr][fc] = None
         self.grid[tr][tc] = piece
-        if piece.type == "K" and abs(tc - fc) == 2:
-            if tc > fc:  # kingside: rook from 7 to tc-1
-                rook = self.grid[fr][7]
+        # castling: king moves exactly 2 in one axis, 0 in the other
+        if piece.type == "K" and ((abs(tr-fr)==2 and tc==fc) or (abs(tc-fc)==2 and tr==fr)):
+            dr = (tr - fr) // 2 if tr != fr else 0
+            dc = (tc - fc) // 2 if tc != fc else 0
+            vecs = CASTLE_VECTORS[self.rotation]
+            side = "k" if (dr, dc) == vecs["k"] else "q"
+            rook_pos = self.castling[piece.color]["rook_k" if side=="k" else "rook_q"]
+            if rook_pos:
+                rook = self.grid[rook_pos[0]][rook_pos[1]]
                 if rook:
-                    self.grid[fr][7] = None
-                    self.grid[fr][tc - 1] = rook
-            else:  # queenside: rook from 0 to tc+1
-                rook = self.grid[fr][0]
-                if rook:
-                    self.grid[fr][0] = None
-                    self.grid[fr][tc + 1] = rook
+                    self.grid[rook_pos[0]][rook_pos[1]] = None
+                    # rook lands on the square the king just passed through
+                    self.grid[fr + dr][fc + dc] = rook
 
     def _undo_raw_move(self, fr: int, fc: int, tr: int, tc: int, piece: ChessPiece, captured: Optional[ChessPiece]) -> None:
-        """Undo _apply_raw_move."""
         self.grid[fr][fc] = piece
         self.grid[tr][tc] = captured
-        if piece.type == "K" and abs(tc - fc) == 2:
-            if tc > fc:
-                rook = self.grid[fr][tc - 1]
+        if piece.type == "K" and ((abs(tr-fr)==2 and tc==fc) or (abs(tc-fc)==2 and tr==fr)):
+            dr = (tr - fr) // 2 if tr != fr else 0
+            dc = (tc - fc) // 2 if tc != fc else 0
+            vecs = CASTLE_VECTORS[self.rotation]
+            side = "k" if (dr, dc) == vecs["k"] else "q"
+            rook_pos = self.castling[piece.color]["rook_k" if side=="k" else "rook_q"]
+            if rook_pos:
+                rook = self.grid[fr + dr][fc + dc]
                 if rook:
-                    self.grid[fr][tc - 1] = None
-                    self.grid[fr][7] = rook
-            else:
-                rook = self.grid[fr][tc + 1]
-                if rook:
-                    self.grid[fr][tc + 1] = None
-                    self.grid[fr][0] = rook
+                    self.grid[fr + dr][fc + dc] = None
+                    self.grid[rook_pos[0]][rook_pos[1]] = rook
 
     def move(self, fr: int, fc: int, tr: int, tc: int, promotion: Optional[str] = None) -> None:
         if not (_on_board(fr, fc) and _on_board(tr, tc)):
@@ -259,19 +282,20 @@ class Board:
             return
         color = piece.color
         # Castling: move rook
-        if piece.type == "K" and abs(tc - fc) == 2:
-            if tc > fc:  # kingside
-                rook = self.grid[fr][7]
+        if piece.type == "K" and ((abs(tr-fr)==2 and tc==fc) or (abs(tc-fc)==2 and tr==fr)):
+            dr = (tr - fr) // 2 if tr != fr else 0
+            dc = (tc - fc) // 2 if tc != fc else 0
+            vecs = CASTLE_VECTORS[self.rotation]
+            side = "k" if (dr, dc) == vecs["k"] else "q"
+            rook_key = "rook_k" if side == "k" else "rook_q"
+            rook_pos = self.castling[color][rook_key]
+            if rook_pos:
+                rook = self.grid[rook_pos[0]][rook_pos[1]]
                 if rook:
-                    self.grid[fr][7] = None
-                    self.grid[fr][tc - 1] = rook
+                    self.grid[rook_pos[0]][rook_pos[1]] = None
+                    self.grid[fr + dr][fc + dc] = rook
                     rook.has_moved = True
-            else:  # queenside
-                rook = self.grid[fr][0]
-                if rook:
-                    self.grid[fr][0] = None
-                    self.grid[fr][tc + 1] = rook
-                    rook.has_moved = True
+            self.castling[color][rook_key] = None
 
         piece.has_moved = True
         if piece.type == "K":
